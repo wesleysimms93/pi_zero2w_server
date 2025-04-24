@@ -6,6 +6,7 @@ import io
 import os
 import time
 import json
+import RPi.GPIO as GPIO  # Add this import for GPIO control
 
 app = Flask(__name__)
 
@@ -27,6 +28,10 @@ if os.path.exists(default_file):
 else:
     print(f"{default_file} not found. Starting with an empty dictionary.")
 
+# Initialize GPIO
+GPIO.setmode(GPIO.BCM)  # Use BCM numbering
+GPIO.setup(4, GPIO.OUT)  # Set GPIO pin 4 as an output
+
 @app.route('/')
 def index():
     return redirect(url_for('video_feed'))
@@ -42,6 +47,17 @@ def raw_capture():
             print(f"Error applying controls: {e}")
             return "Error applying controls", 500
 
+    # Check for the 'infrared' query parameter
+    infrared_mode = request.args.get('infrared', 'false').lower() == 'true'
+
+    # Set GPIO pin 4 based on the infrared mode
+    if not infrared_mode:
+        GPIO.output(4, GPIO.HIGH)  # Infrared mode: GPIO pin 4 HIGH
+        print("Infrared mode enabled: GPIO pin 4 set HIGH")
+    else:
+        GPIO.output(4, GPIO.LOW)  # Non-infrared mode: GPIO pin 4 LOW
+        print("Non-infrared mode: GPIO pin 4 set LOW")
+    time.sleep(0.1)  # Allow time for the camera to adjust
     picam2.start()
     # Capture a frame from the camera
     frame = picam2.capture_array("main")
@@ -63,9 +79,18 @@ def raw_capture():
 @app.route('/video_feed')
 def video_feed():
     start_time = time.time()
-
+    try:
+        picam2.stop()  # Stop the camera before reconfiguring
+        picam2.configure(picam2.create_video_configuration(main={"size": (640, 480), "format": "RGB888"}))
+        picam2.set_controls({"AwbEnable": False, "FrameRate": 15})
+        GPIO.output(4, GPIO.HIGH)  # Non-infrared mode: GPIO pin 4 LOW
+        print("Non-infrared mode: GPIO pin 4 set LOW")
+    except Exception as e:
+        print(f"Error configuring camera: {e}")
+        return "Error configuring camera", 500
     def generate():
         picam2.start()
+
         while True:
             frame = picam2.capture_array("main")
             ret, jpeg_frame = cv2.imencode('.jpg', frame)
